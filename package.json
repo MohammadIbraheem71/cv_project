@@ -1,7 +1,7 @@
 {
-  "name": "cv_project",
-  "version": "0.1.0",
-  "private": true,
+  "name": "expo_app",
+  "version": "1.0.0",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -9,10 +9,15 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "react-native": "0.71.8",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "expo": "^48.0.0",
-    "react-native-web": "~0.18.10"
-  }
+    "expo": "~54.0.33",
+    "expo-camera": "~17.0.10",
+    "expo-image-picker": "~17.0.11",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "^5.7.0",
+    "react-native-web": "^0.21.0"
+  },
+  "private": true
 }

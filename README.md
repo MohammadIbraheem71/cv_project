@@ -1,13 +1,20 @@
-# CV Project (React Native)
+# CV Project
 
-1. Install dependencies:
+Expo app with a live camera preview and a mobile-only camera switch control.
+
+## Requirements
+
+- Node.js installed
+- Expo Go on a mobile device, if you want to test the camera on Android or iPhone
+
+## Install
 
 ```bash
 npm install
 ```
 
-2. Start Expo:
+## Run
 
 ```bash
-npx expo start
+npx expo start -c
 ```
