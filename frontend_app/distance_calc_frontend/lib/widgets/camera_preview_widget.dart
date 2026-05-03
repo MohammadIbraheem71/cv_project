@@ -8,23 +8,41 @@ class CameraPreviewWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+    final screenSize = MediaQuery.of(context).size;
+    final screenW = screenSize.width;
+    final screenH = screenSize.height;
 
-    // Camera aspect ratio (e.g. 16:9)
-    final cameraAspectRatio = controller.value.aspectRatio;
+    // Camera gives width/height in landscape terms
+    // For portrait phones we need to flip the ratio
+    final previewSize = controller.value.previewSize!;
+    final cameraW = previewSize.height; // flipped for portrait
+    final cameraH = previewSize.width;  // flipped for portrait
+    final cameraRatio = cameraW / cameraH;
 
-    // Screen aspect ratio
-    final screenAspectRatio = size.width / size.height;
+    debugPrint('[CameraPreviewWidget] Screen: ${screenW}x${screenH}');
+    debugPrint('[CameraPreviewWidget] Camera preview size: ${previewSize.width}x${previewSize.height}');
+    debugPrint('[CameraPreviewWidget] Adjusted camera ratio: $cameraRatio');
 
-    // Scale factor to make it fill screen (crop if needed)
-    final scale = cameraAspectRatio / screenAspectRatio;
+    // Scale camera to fill screen without stretching
+    double scale;
+    if (screenW / screenH > cameraRatio) {
+      // Screen is wider than camera — fit by width
+      scale = screenW / (cameraRatio * screenH);
+    } else {
+      // Screen is taller than camera — fit by height
+      scale = screenH * cameraRatio / screenW;
+    }
 
-    return Transform.scale(
-      scale: scale < 1 ? 1 / scale : scale,
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: cameraAspectRatio,
-          child: CameraPreview(controller),
+    debugPrint('[CameraPreviewWidget] Scale factor: $scale');
+
+    return ClipRect(
+      child: Transform.scale(
+        scale: scale,
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: cameraRatio,
+            child: CameraPreview(controller),
+          ),
         ),
       ),
     );
