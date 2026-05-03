@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import WebCameraView    from './cameraView.web.js';
 import NativeCameraView from './cameraView.native.js';
@@ -21,6 +21,8 @@ import NativeCameraView from './cameraView.native.js';
  *  onError      - callback(errorMsg) when camera fails
  *  videoRef     - ref forwarded to <video> element (web)
  *  canvasRef    - ref for detection overlay canvas (web)
+ *  cameraRef    - ref forwarded to CameraView (native)
+ *  fullscreen   - bool: if true, fill parent container completely
  */
 export default function CameraFrame({
   visible,
@@ -31,23 +33,47 @@ export default function CameraFrame({
   onError,
   videoRef,
   canvasRef,
+  cameraRef,
+  fullscreen = false,
 }) {
+  const frameStyle = fullscreen
+    ? [styles.frame, styles.frameFullscreen]
+    : styles.frame;
+
+  console.log(
+    `[CameraFrame] Render — visible:${visible}, ready:${ready}, ` +
+    `error:"${error}", facing:${facing}, fullscreen:${fullscreen}, platform:${Platform.OS}`
+  );
+
   return (
-    <View style={styles.frame}>
+    <View style={frameStyle}>
       {visible && !error ? (
         <>
           {Platform.OS === 'web' ? (
             <WebCameraView
               facing={facing}
-              onReady={onReady}
-              onError={onError}
+              onReady={() => {
+                console.log('[CameraFrame] WebCameraView onReady fired');
+                onReady?.();
+              }}
+              onError={(err) => {
+                console.error('[CameraFrame] WebCameraView onError:', err);
+                onError?.(err);
+              }}
               videoRef={videoRef}
             />
           ) : (
             <NativeCameraView
               facing={facing}
-              onReady={onReady}
-              onError={onError}
+              onReady={() => {
+                console.log('[CameraFrame] NativeCameraView onReady fired');
+                onReady?.();
+              }}
+              onError={(err) => {
+                console.error('[CameraFrame] NativeCameraView onError:', err);
+                onError?.(err);
+              }}
+              cameraRef={cameraRef}
             />
           )}
 
@@ -102,6 +128,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#0f1c2d',
     position: 'relative',
+  },
+  frameFullscreen: {
+    height: '100%',
+    borderRadius: 0,
+    flex: 1,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

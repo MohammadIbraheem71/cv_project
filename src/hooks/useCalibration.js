@@ -92,5 +92,7 @@ export function useCalibration() {
     setCalibrationDist,
     captureCalibration,
     resetCalibration,
+    setFocalLength,
+    setIsCalibrated,
   };
 }

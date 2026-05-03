@@ -23,12 +23,12 @@ export const DEFAULT_CALIBRATION = {
 // Detection thresholds
 export const DETECTION = {
   // Minimum pixel area for a blob to be considered a real obstacle
-  minBlobArea:        500,
+  minBlobArea:        100,
   // How different a pixel must be from mean to count as foreground
-  brightnessThreshold: 35,
-  // Center ROI — fraction of frame to analyze (0.25 → 75% = center 50%)
-  roiStart:           0.25,
-  roiEnd:             0.75,
+  brightnessThreshold: 15,
+  // Center ROI — fraction of frame to analyze (0.20 → 80% = center 60%)
+  roiStart:           0.20,
+  roiEnd:             0.80,
 };
 
 // Distance zones — in meters
