@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'screens/home_screen.dart';
+import 'package:flutter/services.dart';
 
 List<CameraDescription> cameras = [];
 
@@ -18,6 +19,9 @@ Future<void> main() async {
     debugPrint('[main] Error fetching cameras: $e');
   }
 
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
   runApp(MyApp(cameras: cameras));
 }
 

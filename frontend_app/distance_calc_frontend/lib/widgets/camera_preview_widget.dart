@@ -8,31 +8,25 @@ class CameraPreviewWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('[CameraPreviewWidget] Building camera preview');
-    debugPrint('[CameraPreviewWidget] Camera aspect ratio: ${controller.value.aspectRatio}');
+    final size = MediaQuery.of(context).size;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        debugPrint('[CameraPreviewWidget] Available size: ${constraints.maxWidth}x${constraints.maxHeight}');
+    // Camera aspect ratio (e.g. 16:9)
+    final cameraAspectRatio = controller.value.aspectRatio;
 
-        return SizedBox(
-          width: constraints.maxWidth,
-          height: constraints.maxHeight,
-          child: ClipRect(
-            child: OverflowBox(
-              alignment: Alignment.center,
-              child: FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  height: constraints.maxWidth * (1 / controller.value.aspectRatio),
-                  child: CameraPreview(controller),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
+    // Screen aspect ratio
+    final screenAspectRatio = size.width / size.height;
+
+    // Scale factor to make it fill screen (crop if needed)
+    final scale = cameraAspectRatio / screenAspectRatio;
+
+    return Transform.scale(
+      scale: scale < 1 ? 1 / scale : scale,
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: cameraAspectRatio,
+          child: CameraPreview(controller),
+        ),
+      ),
     );
   }
 }
