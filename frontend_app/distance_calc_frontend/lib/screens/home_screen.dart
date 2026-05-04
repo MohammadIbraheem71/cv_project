@@ -1,15 +1,14 @@
-import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
 import 'dart:typed_data';
 import 'dart:ui';
-import 'dart:typed_data';
 
+import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
 
 import '../main.dart';
-import '../widgets/camera_preview_widget.dart';
-import '../widgets/bounding_box_painter.dart';
 import '../services/mlkit_detector.dart';
+import '../widgets/bounding_box_painter.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,156 +17,584 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with WidgetsBindingObserver {
-  CameraController? controller;
-
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final MLKitDetector _detector = MLKitDetector();
 
-  List<Detection> _detections = [];
+  CameraController? _controller;
+  List<RearObstacleDetection> _detections = const [];
 
   bool _isCameraReady = false;
   bool _isProcessing = false;
   bool _isInitializing = false;
+  bool _isDetectorReady = false;
+
+  int _selectedCameraIndex = 0;
+  Size _frameSize = Size.zero;
+  String? _errorMessage;
+  DateTime? _lastAlertAt;
+
+  List<CameraDescription> get _availableCameras => cameras;
+
+  CameraDescription? get _activeCamera {
+    if (_availableCameras.isEmpty ||
+        _selectedCameraIndex < 0 ||
+        _selectedCameraIndex >= _availableCameras.length) {
+      return null;
+    }
+
+    return _availableCameras[_selectedCameraIndex];
+  }
+
+  bool get _isFrontCamera =>
+      _activeCamera?.lensDirection == CameraLensDirection.front;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
-    _initMLKit();
-    _initCamera();
+    _bootstrap();
   }
 
-  // ───────────────────────── ML KIT ─────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_availableCameras.isEmpty) {
+      return;
+    }
 
-  Future<void> _initMLKit() async {
-    await _detector.init();
-    debugPrint('[MLKit] Ready');
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _disposeCameraController();
+    } else if (state == AppLifecycleState.resumed && !_isCameraReady) {
+      _initializeCamera();
+    }
   }
 
-  // ───────────────────────── CAMERA ─────────────────────────
+  Future<void> _bootstrap() async {
+    try {
+      await _detector.init();
+      _isDetectorReady = true;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'ML detector failed to initialize: $error';
+        });
+      }
+      return;
+    }
 
-  Future<void> _initCamera() async {
-    if (_isInitializing) return;
-    _isInitializing = true;
+    if (_availableCameras.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _errorMessage =
+              'No cameras were found on this device. Connect a camera and retry.';
+        });
+      }
+      return;
+    }
 
-    final cam = cameras.firstWhere(
-      (c) => c.lensDirection == CameraLensDirection.back,
-      orElse: () => cameras.first,
+    _selectedCameraIndex = _findDefaultCameraIndex();
+    await _initializeCamera();
+  }
+
+  int _findDefaultCameraIndex() {
+    final backIndex = _availableCameras.indexWhere(
+      (camera) => camera.lensDirection == CameraLensDirection.back,
     );
 
-    controller = CameraController(
-      cam,
+    return backIndex >= 0 ? backIndex : 0;
+  }
+
+  Future<void> _initializeCamera() async {
+    if (_isInitializing || !_isDetectorReady || _availableCameras.isEmpty) {
+      return;
+    }
+
+    final activeCamera = _activeCamera;
+    if (activeCamera == null) {
+      return;
+    }
+
+    _isInitializing = true;
+    _errorMessage = null;
+    await _disposeCameraController();
+
+    final controller = CameraController(
+      activeCamera,
       ResolutionPreset.medium,
       enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.yuv420,
     );
 
     try {
-      await controller!.initialize();
+      await controller.initialize();
+      await controller.startImageStream(_processFrame);
 
-      if (!mounted) return;
-
-      await controller!.startImageStream(_processFrame);
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
 
       setState(() {
+        _controller = controller;
         _isCameraReady = true;
+        _frameSize = Size(
+          controller.value.previewSize?.height ?? 0,
+          controller.value.previewSize?.width ?? 0,
+        );
       });
-    } catch (e) {
-      debugPrint('[Camera Error] $e');
+    } catch (error) {
+      await controller.dispose();
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Unable to initialize camera: $error';
+          _isCameraReady = false;
+        });
+      }
+    } finally {
+      _isInitializing = false;
     }
-
-    _isInitializing = false;
   }
 
-  // ───────────────────────── FRAME PROCESSING ─────────────────────────
+  Future<void> _disposeCameraController() async {
+    final controller = _controller;
+    _controller = null;
+
+    if (controller == null) {
+      return;
+    }
+
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (_) {
+      // The stream may already be stopped during lifecycle changes.
+    }
+
+    await controller.dispose();
+
+    if (mounted) {
+      setState(() {
+        _isCameraReady = false;
+      });
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_availableCameras.length < 2 || _isInitializing) {
+      return;
+    }
+
+    setState(() {
+      _selectedCameraIndex =
+          (_selectedCameraIndex + 1) % _availableCameras.length;
+    });
+
+    await _initializeCamera();
+  }
 
   Future<void> _processFrame(CameraImage image) async {
-    if (_isProcessing) return;
+    if (_isProcessing || !_isCameraReady) {
+      return;
+    }
+
     _isProcessing = true;
 
     try {
       final inputImage = _convert(image);
-      final results = await _detector.process(inputImage);
+      final frameSize = Size(image.width.toDouble(), image.height.toDouble());
+      final results = await _detector.process(inputImage, frameSize);
 
-      if (mounted) {
-        setState(() {
-          _detections = results;
-        });
+      if (!mounted) {
+        return;
       }
-    } catch (e) {
-      debugPrint('[Detection Error] $e');
-    }
 
-    _isProcessing = false;
+      setState(() {
+        _detections = results;
+        _frameSize = frameSize;
+      });
+
+      _handleHazardAlert(results.isNotEmpty ? results.first : null);
+    } catch (error) {
+      debugPrint('[Detection Error] $error');
+    } finally {
+      _isProcessing = false;
+    }
   }
 
-  // ───────────────────────── SAFE CONVERSION ─────────────────────────
-
-  InputImage _convert(CameraImage image) {
-    final WriteBuffer allBytes = WriteBuffer();
-
-    for (final plane in image.planes) {
-      allBytes.putUint8List(plane.bytes);
+  void _handleHazardAlert(RearObstacleDetection? nearestDetection) {
+    if (nearestDetection == null || !nearestDetection.isHazard) {
+      return;
     }
 
-    final bytes = allBytes.done().buffer.asUint8List();
+    final now = DateTime.now();
+    final canAlert =
+        _lastAlertAt == null ||
+        now.difference(_lastAlertAt!) >= const Duration(seconds: 2);
 
-    final Size imageSize =
-        Size(image.width.toDouble(), image.height.toDouble());
+    if (!canAlert) {
+      return;
+    }
 
-    final rotation = InputImageRotationValue.fromRawValue(
-          controller!.description.sensorOrientation,
+    _lastAlertAt = now;
+    SystemSound.play(SystemSoundType.alert);
+    HapticFeedback.mediumImpact();
+  }
+
+  InputImage _convert(CameraImage image) {
+    final bytes = _convertYuv420ToNv21(image);
+    final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+
+    final rotation =
+        InputImageRotationValue.fromRawValue(
+          _controller?.description.sensorOrientation ?? 0,
         ) ??
         InputImageRotation.rotation0deg;
-
-    final format =
-        InputImageFormatValue.fromRawValue(image.format.raw) ??
-        InputImageFormat.nv21;
 
     return InputImage.fromBytes(
       bytes: bytes,
       metadata: InputImageMetadata(
         size: imageSize,
         rotation: rotation,
-        format: format,
-        bytesPerRow: image.planes.first.bytesPerRow,
+        format: InputImageFormat.nv21,
+        bytesPerRow: image.width,
       ),
     );
   }
 
-  // ───────────────────────── LIFECYCLE ─────────────────────────
+  Uint8List _convertYuv420ToNv21(CameraImage image) {
+    final width = image.width;
+    final height = image.height;
+    final yPlane = image.planes[0];
+    final uPlane = image.planes[1];
+    final vPlane = image.planes[2];
+
+    final output = Uint8List(width * height * 3 ~/ 2);
+    var outputOffset = 0;
+
+    for (var row = 0; row < height; row++) {
+      final rowStart = row * yPlane.bytesPerRow;
+      output.setRange(
+        outputOffset,
+        outputOffset + width,
+        yPlane.bytes,
+        rowStart,
+      );
+      outputOffset += width;
+    }
+
+    final chromaHeight = height ~/ 2;
+    final chromaWidth = width ~/ 2;
+    final uPixelStride = uPlane.bytesPerPixel ?? 1;
+    final vPixelStride = vPlane.bytesPerPixel ?? 1;
+
+    for (var row = 0; row < chromaHeight; row++) {
+      final uRowStart = row * uPlane.bytesPerRow;
+      final vRowStart = row * vPlane.bytesPerRow;
+
+      for (var col = 0; col < chromaWidth; col++) {
+        final uIndex = uRowStart + col * uPixelStride;
+        final vIndex = vRowStart + col * vPixelStride;
+
+        output[outputOffset++] = vPlane.bytes[vIndex];
+        output[outputOffset++] = uPlane.bytes[uIndex];
+      }
+    }
+
+    return output;
+  }
+
+  RearObstacleDetection? get _nearestDetection {
+    if (_detections.isEmpty) {
+      return null;
+    }
+
+    return _detections.first;
+  }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    controller?.dispose();
+    _disposeCameraController();
     _detector.dispose();
     super.dispose();
   }
 
-  // ───────────────────────── UI ─────────────────────────
+  Widget _buildLoadingState() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage ?? 'Starting rear obstacle detector...',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.videocam_off, size: 64, color: Colors.white70),
+                const SizedBox(height: 16),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16, height: 1.4),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _errorMessage = null;
+                      _isCameraReady = false;
+                      _detections = const [];
+                    });
+                    _bootstrap();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    final nearest = _nearestDetection;
+    final dangerColor = nearest?.isHazard == true
+        ? Colors.redAccent
+        : Colors.greenAccent;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Rear Obstacle Monitor',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  nearest == null
+                      ? 'Tracking obstacles behind the car'
+                      : nearest.isHazard
+                      ? 'Warning: obstacle close behind the car'
+                      : 'Clear path: obstacle tracked at a safer distance',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: dangerColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: dangerColor.withOpacity(0.35)),
+            ),
+            child: Text(
+              nearest == null
+                  ? 'IDLE'
+                  : nearest.isHazard
+                  ? 'DANGER'
+                  : 'SAFE',
+              style: TextStyle(
+                color: dangerColor,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (_availableCameras.length > 1)
+            IconButton.filledTonal(
+              onPressed: _switchCamera,
+              icon: const Icon(Icons.cameraswitch),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomPanel() {
+    final nearest = _nearestDetection;
+    final distanceText = nearest == null
+        ? '--'
+        : '${nearest.estimatedDistanceMeters.toStringAsFixed(1)} m';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111111),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: _MetricTile(
+                  label: 'Nearest distance',
+                  value: distanceText,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _MetricTile(
+                  label: 'Objects tracked',
+                  value: '${_detections.length}',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            nearest == null
+                ? 'Point the rear camera toward the lane behind your car to start detection.'
+                : 'Closest object: ${nearest.label} • ${(nearest.confidence * 100).toStringAsFixed(0)}% confidence',
+            style: const TextStyle(color: Colors.white70, height: 1.35),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (!_isCameraReady || controller == null) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator()),
-      );
+    if (_errorMessage != null) {
+      return _buildErrorState(_errorMessage!);
+    }
+
+    if (!_isCameraReady || _controller == null) {
+      return _buildLoadingState();
     }
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: CameraPreviewWidget(controller: controller!),
-          ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildTopBar(),
+            Expanded(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: AspectRatio(
+                      aspectRatio: _controller!.value.aspectRatio,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          CameraPreview(_controller!),
+                          IgnorePointer(
+                            child: CustomPaint(
+                              painter: BoundingBoxPainter(
+                                _detections,
+                                _frameSize,
+                                mirror: _isFrontCamera,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: 18,
+                            right: 18,
+                            bottom: 18,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.22),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                child: Text(
+                                  'Rear warning zone is highlighted in red. Move forward if the nearest object enters the danger zone.',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            _buildBottomPanel(),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
-          Positioned.fill(
-            child: CustomPaint(
-              painter: BoundingBoxPainter(_detections),
+class _MetricTile extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _MetricTile({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
