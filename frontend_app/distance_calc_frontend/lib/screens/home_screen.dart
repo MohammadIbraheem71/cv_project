@@ -9,6 +9,7 @@ import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart
 import '../main.dart';
 import '../services/mlkit_detector.dart';
 import '../widgets/bounding_box_painter.dart';
+import '../widgets/camera_preview_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -505,58 +506,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Column(
           children: [
             _buildTopBar(),
-            Expanded(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(28),
-                    child: AspectRatio(
-                      aspectRatio: _controller!.value.aspectRatio,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          CameraPreview(_controller!),
-                          IgnorePointer(
-                            child: CustomPaint(
-                              painter: BoundingBoxPainter(
-                                _detections,
-                                _frameSize,
-                                mirror: _isFrontCamera,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: 18,
-                            right: 18,
-                            bottom: 18,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.22),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 10,
-                                ),
-                                child: Text(
-                                  'Rear warning zone is highlighted in red. Move forward if the nearest object enters the danger zone.',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    height: 1.3,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+            CameraPreviewWidget(
+              controller: _controller!,
+              detections: _detections,
+              frameSize: _frameSize,
+              mirror: _isFrontCamera,
             ),
             _buildBottomPanel(),
           ],
