@@ -24,7 +24,8 @@ android {
         applicationId = "com.example.distance_calc_frontend"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // tflite_flutter requires minSdk 26; override the Flutter variable here.
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
