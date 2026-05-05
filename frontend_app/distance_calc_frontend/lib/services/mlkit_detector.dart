@@ -141,6 +141,11 @@ class MLKitDetector {
   }
 
   double _referenceWidthMeters(String label) {
+    // If calibrated, always use calibrated width regardless of label
+    if (_calibratedRealWidthMeters != null) {
+      return _calibratedRealWidthMeters!;
+    }
+
     final normalized = label.toLowerCase();
 
     if (normalized.contains('person') ||
@@ -162,7 +167,7 @@ class MLKitDetector {
       return 0.6;  // handlebar width ~60cm
     }
 
-    return 0.8;  // generic fallback
+    return 0.8;  // default fallback
   }
 
   void dispose() {

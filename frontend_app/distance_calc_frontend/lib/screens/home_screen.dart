@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +6,6 @@ import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart
 
 import '../main.dart';
 import '../services/mlkit_detector.dart';
-import '../widgets/bounding_box_painter.dart';
 import '../widgets/camera_preview_widget.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -364,7 +361,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
       final objectWidthMeters = widthCm / 100.0;
-      final focalLengthPx = (target.boundingBox.width * objectWidthMeters) / distanceMeters;
+      // Focal length from pinhole camera: f = (bbox_width * distance) / object_real_width
+      final focalLengthPx = (target.boundingBox.width * distanceMeters) / objectWidthMeters;
 
       _detector.setFocalLength(focalLengthPx, realWidthMeters: objectWidthMeters);
 
