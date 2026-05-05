@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'dart:math' as math;
 import '../services/mlkit_detector.dart';
 
 class BoundingBoxPainter extends CustomPainter {
@@ -62,8 +62,6 @@ class BoundingBoxPainter extends CustomPainter {
       final rect = _mapRect(
         detection.boundingBox,
         canvasSize: size,
-        scaleX: scaleX,
-        scaleY: scaleY,
       );
 
       final boxPaint = detection.isHazard ? hazardPaint : safePaint;
@@ -114,13 +112,18 @@ class BoundingBoxPainter extends CustomPainter {
   Rect _mapRect(
     Rect rect, {
     required Size canvasSize,
-    required double scaleX,
-    required double scaleY,
   }) {
-    final left = rect.left * scaleX;
-    final right = rect.right * scaleX;
-    final top = rect.top * scaleY;
-    final bottom = rect.bottom * scaleY;
+    final scale = math.min(
+      canvasSize.width / frameSize.width,
+      canvasSize.height / frameSize.height,
+    );
+    final offsetX = (canvasSize.width - frameSize.width * scale) / 2;
+    final offsetY = (canvasSize.height - frameSize.height * scale) / 2;
+
+    final left = rect.left * scale + offsetX;
+    final right = rect.right * scale + offsetX;
+    final top = rect.top * scale + offsetY;
+    final bottom = rect.bottom * scale + offsetY;
 
     if (!mirror) {
       return Rect.fromLTRB(left, top, right, bottom);

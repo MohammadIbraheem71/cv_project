@@ -141,8 +141,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _controller = controller;
         _isCameraReady = true;
         _frameSize = Size(
-          controller.value.previewSize?.width ?? 0,
           controller.value.previewSize?.height ?? 0,
+          controller.value.previewSize?.width ?? 0,
         );
       });
     } catch (error) {
@@ -205,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     try {
       final inputImage = _convert(image);
-      final frameSize = Size(image.width.toDouble(), image.height.toDouble());
+      final frameSize = Size(image.height.toDouble(), image.width.toDouble());
       final results = await _detector.process(inputImage, frameSize);
 
       if (!mounted) {
@@ -369,7 +369,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _detector.setFocalLength(focalLengthPx);
 
       Navigator.of(dialogContext).pop();
-
+ 
       scaffoldMessenger.showSnackBar(
         SnackBar(
           content: Text(
