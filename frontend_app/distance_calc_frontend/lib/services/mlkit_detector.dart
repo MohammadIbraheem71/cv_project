@@ -24,6 +24,7 @@ class RearObstacleDetection {
 class MLKitDetector {
   ObjectDetector? _detector;
   bool _isReady = false;
+  double _focalLengthPx = 550.0;
 
   Future<void> init() async {
     if (_isReady) {
@@ -63,6 +64,12 @@ class MLKitDetector {
     return detections;
   }
 
+  void setFocalLength(double focalLengthPx) {
+    if (focalLengthPx.isFinite && focalLengthPx > 0) {
+      _focalLengthPx = focalLengthPx;
+    }
+  }
+
   RearObstacleDetection _convertObject(DetectedObject object, Size frameSize) {
     final label = object.labels.isNotEmpty
         ? object.labels.first.text
@@ -100,11 +107,10 @@ class MLKitDetector {
     required Size frameSize,
     required String label,
   }) {
-    final boxHeight = math.max(box.height, 1.0);
-    final referenceHeight = _referenceHeightMeters(label);
+    final boxWidth = math.max(box.width, 1.0);  // was box.height
+    final referenceWidth = _referenceWidthMeters(label);  // renamed
 
-    const focalLengthPx = 550.0;
-    final rawDistance = (focalLengthPx * referenceHeight) / boxHeight;
+    final rawDistance = (_focalLengthPx * referenceWidth) / boxWidth;
 
     return rawDistance.clamp(0.4, 30.0);
   }
@@ -130,29 +136,29 @@ class MLKitDetector {
         (confidence * 0.05);
   }
 
-  double _referenceHeightMeters(String label) {
+  double _referenceWidthMeters(String label) {
     final normalized = label.toLowerCase();
 
     if (normalized.contains('person') ||
         normalized.contains('pedestrian') ||
         normalized.contains('human')) {
-      return 1.7;
+      return 0.5;  // shoulder width ~50cm
     }
 
     if (normalized.contains('car') ||
         normalized.contains('truck') ||
         normalized.contains('bus') ||
         normalized.contains('vehicle')) {
-      return 1.5;
+      return 1.8;  // typical car width ~180cm
     }
 
     if (normalized.contains('bicycle') ||
         normalized.contains('bike') ||
         normalized.contains('motorcycle')) {
-      return 1.3;
+      return 0.6;  // handlebar width ~60cm
     }
 
-    return 1.45;
+    return 0.8;  // generic fallback
   }
 
   void dispose() {

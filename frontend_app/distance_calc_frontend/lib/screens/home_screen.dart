@@ -33,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Size _frameSize = Size.zero;
   String? _errorMessage;
   DateTime? _lastAlertAt;
+  bool _isCalibrationMode = false;
+  RearObstacleDetection? _calibrationTarget;
 
   List<CameraDescription> get _availableCameras => cameras;
 
@@ -313,25 +315,140 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return _detections.first;
   }
 
-  void _showCalibrationDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Calibration'),
-          content: const Text(
-            'Calibration features will help improve distance estimation accuracy. '
-            'This feature is under development.',
+  void _enterCalibrationMode() {
+    setState(() {
+      _isCalibrationMode = true;
+      _calibrationTarget = null;
+    });
+  }
+
+  void _cancelCalibrationMode() {
+    setState(() {
+      _isCalibrationMode = false;
+      _calibrationTarget = null;
+    });
+  }
+
+  Future<void> _captureCalibrationTarget() async {
+    final target = _nearestDetection;
+
+    if (target == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No detected object is available to calibrate.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _calibrationTarget = target;
+    });
+
+    await _showCalibrationDialog(target);
+  }
+
+  Future<void> _showCalibrationDialog(RearObstacleDetection target) async {
+    final widthController = TextEditingController();
+    final distanceController = TextEditingController();
+    String? errorText;
+
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    void saveCalibration(BuildContext dialogContext, void Function(void Function()) setDialogState) {
+      final widthCm = double.tryParse(widthController.text.trim());
+      final distanceMeters = double.tryParse(distanceController.text.trim());
+
+      if (widthCm == null || widthCm <= 0 || distanceMeters == null || distanceMeters <= 0) {
+        setDialogState(() {
+          errorText = 'Enter valid width in cm and distance in meters.';
+        });
+        return;
+      }
+      final objectWidthMeters = widthCm / 100.0;
+      final focalLengthPx = (target.boundingBox.width * objectWidthMeters) / distanceMeters;
+
+      _detector.setFocalLength(focalLengthPx);
+
+      Navigator.of(dialogContext).pop();
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Calibration saved. Focal length set to ${focalLengthPx.toStringAsFixed(1)} px.',
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
+        ),
+      );
+
+      if (mounted) {
+        _cancelCalibrationMode();
+      }
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (BuildContext context, void Function(void Function()) setDialogState) {
+            return AlertDialog(
+              title: const Text('Calibrate object'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Captured box width: ${target.boundingBox.width.toStringAsFixed(1)} px',
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: widthController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Object width (cm)',
+                        hintText: 'e.g. 20',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: distanceController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Distance from camera (m)',
+                        hintText: 'e.g. 2.5',
+                      ),
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => saveCalibration(dialogContext, setDialogState),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
+
+    // Dispose AFTER the dialog future completes, not before
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widthController.dispose();
+      distanceController.dispose();
+    });
   }
 
   @override
@@ -437,7 +554,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (value == 'camera_flip' && _availableCameras.length > 1) {
                 _switchCamera();
               } else if (value == 'calibration') {
-                _showCalibrationDialog();
+                _enterCalibrationMode();
               }
             },
             itemBuilder: (BuildContext context) => [
@@ -531,6 +648,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               detections: _detections,
               frameSize: _frameSize,
               mirror: _isFrontCamera,
+              isCalibrationMode: _isCalibrationMode,
+              onCalibrate: _captureCalibrationTarget,
+              onCancelCalibration: _cancelCalibrationMode,
             ),
             _buildBottomPanel(),
           ],
