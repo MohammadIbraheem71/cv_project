@@ -139,8 +139,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _controller = controller;
         _isCameraReady = true;
         _frameSize = Size(
-          controller.value.previewSize?.height ?? 0,
           controller.value.previewSize?.width ?? 0,
+          controller.value.previewSize?.height ?? 0,
         );
       });
     } catch (error) {
@@ -313,6 +313,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return _detections.first;
   }
 
+  void _showCalibrationDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Calibration'),
+          content: const Text(
+            'Calibration features will help improve distance estimation accuracy. '
+            'This feature is under development.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -387,31 +408,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Rear Obstacle Monitor',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  nearest == null
-                      ? 'Tracking obstacles behind the car'
-                      : nearest.isHazard
-                      ? 'Warning: obstacle close behind the car'
-                      : 'Clear path: obstacle tracked at a safer distance',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(color: Colors.white70),
-                ),
-              ],
-            ),
-          ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -433,11 +431,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(width: 8),
-          if (_availableCameras.length > 1)
-            IconButton.filledTonal(
-              onPressed: _switchCamera,
-              icon: const Icon(Icons.cameraswitch),
-            ),
+          PopupMenuButton(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (String value) {
+              if (value == 'camera_flip' && _availableCameras.length > 1) {
+                _switchCamera();
+              } else if (value == 'calibration') {
+                _showCalibrationDialog();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              if (_availableCameras.length > 1)
+                const PopupMenuItem<String>(
+                  value: 'camera_flip',
+                  child: Row(
+                    children: [
+                      Icon(Icons.cameraswitch, size: 20),
+                      SizedBox(width: 12),
+                      Text('Flip Camera'),
+                    ],
+                  ),
+                ),
+              const PopupMenuItem<String>(
+                value: 'calibration',
+                child: Row(
+                  children: [
+                    Icon(Icons.tune, size: 20),
+                    SizedBox(width: 12),
+                    Text('Calibration'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -479,12 +505,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ],
           ),
           const SizedBox(height: 14),
-          Text(
-            nearest == null
-                ? 'Point the rear camera toward the lane behind your car to start detection.'
-                : 'Closest object: ${nearest.label} • ${(nearest.confidence * 100).toStringAsFixed(0)}% confidence',
-            style: const TextStyle(color: Colors.white70, height: 1.35),
-          ),
         ],
       ),
     );

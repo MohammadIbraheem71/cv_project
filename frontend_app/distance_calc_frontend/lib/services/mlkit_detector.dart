@@ -103,14 +103,10 @@ class MLKitDetector {
     final boxHeight = math.max(box.height, 1.0);
     final referenceHeight = _referenceHeightMeters(label);
 
-    const focalLengthPx = 760.0;
+    const focalLengthPx = 550.0;
     final rawDistance = (focalLengthPx * referenceHeight) / boxHeight;
-    final bottomBias =
-        1.0 +
-        ((frameSize.height - box.bottom) / frameSize.height).clamp(0.0, 1.0) *
-            0.15;
 
-    return (rawDistance * bottomBias).clamp(0.4, 30.0);
+    return rawDistance.clamp(0.4, 30.0);
   }
 
   double _hazardScore({
