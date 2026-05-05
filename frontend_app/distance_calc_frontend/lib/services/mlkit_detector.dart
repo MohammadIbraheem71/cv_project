@@ -25,6 +25,7 @@ class MLKitDetector {
   ObjectDetector? _detector;
   bool _isReady = false;
   double _focalLengthPx = 550.0;
+  double? _calibratedRealWidthMeters; 
 
   Future<void> init() async {
     if (_isReady) {
@@ -64,9 +65,12 @@ class MLKitDetector {
     return detections;
   }
 
-  void setFocalLength(double focalLengthPx) {
+  void setFocalLength(double focalLengthPx, {double? realWidthMeters}) {
     if (focalLengthPx.isFinite && focalLengthPx > 0) {
       _focalLengthPx = focalLengthPx;
+    }
+    if (realWidthMeters != null && realWidthMeters.isFinite && realWidthMeters > 0) {
+      _calibratedRealWidthMeters = realWidthMeters;
     }
   }
 

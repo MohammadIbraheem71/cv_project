@@ -366,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final objectWidthMeters = widthCm / 100.0;
       final focalLengthPx = (target.boundingBox.width * objectWidthMeters) / distanceMeters;
 
-      _detector.setFocalLength(focalLengthPx);
+      _detector.setFocalLength(focalLengthPx, realWidthMeters: objectWidthMeters);
 
       Navigator.of(dialogContext).pop();
  
