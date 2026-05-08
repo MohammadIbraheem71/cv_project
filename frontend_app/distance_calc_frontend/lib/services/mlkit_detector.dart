@@ -158,7 +158,27 @@ class MLKitDetector {
       return 0.6;  // handlebar width ~60cm
     }
 
-    return 0.8;  // generic fallback
+    if (normalized.contains('fashion')) {
+      return 0.5; // person wearing clothing
+    }
+    if (normalized.contains('food')) {
+      return 0.3;
+    }
+    if (normalized.contains('home')) {
+      return 0.6;
+    }
+    if (normalized.contains('plant')) {
+      return 0.4;
+    }
+    if (normalized.contains('place')) {
+      return 1.5;
+    }
+
+    // in this case, we r not sure what this is
+    // for our application of making a car rear obstacle detector
+    // we will assume that it is a car
+    // since it doesnt have a label, it gets the geneeric fall back value
+    return 1.8;  // generic fallback
   }
 
   void dispose() {
