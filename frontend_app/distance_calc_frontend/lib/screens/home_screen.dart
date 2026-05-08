@@ -1,10 +1,15 @@
 
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../main.dart';
+import '../depth/depth_estimator.dart';
+import '../depth/known_sizes.dart';
 import '../services/mlkit_detector.dart';
 import '../widgets/camera_preview_widget.dart';
 
@@ -16,22 +21,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  static const String _focalLengthPreferenceKey = 'calibrated_focal_length_px';
   final MLKitDetector _detector = MLKitDetector();
+  final DepthEstimator _depthEstimator = DepthEstimator();
 
   CameraController? _controller;
   List<RearObstacleDetection> _detections = const [];
+  List<List<double>>? _cachedDepthMap;
 
   bool _isCameraReady = false;
   bool _isProcessing = false;
   bool _isInitializing = false;
   bool _isDetectorReady = false;
+  bool _useDepth = true;
 
   int _selectedCameraIndex = 0;
+  int _depthFrameCounter = 0;
   Size _frameSize = Size.zero;
   String? _errorMessage;
   DateTime? _lastAlertAt;
   bool _isCalibrationMode = false;
-  RearObstacleDetection? _calibrationTarget;
+  double _midasScale = 1.0; // TODO: calibrate this per device with real-distance samples.
 
   List<CameraDescription> get _availableCameras => cameras;
 
@@ -72,6 +82,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _bootstrap() async {
     try {
       await _detector.init();
+      _useDepth = await _depthEstimator.initialize();
+      await _loadCalibration();
       _isDetectorReady = true;
     } catch (error) {
       if (mounted) {
@@ -94,6 +106,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _selectedCameraIndex = _findDefaultCameraIndex();
     await _initializeCamera();
+  }
+
+  Future<void> _loadCalibration() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedFocalLength = prefs.getDouble(_focalLengthPreferenceKey);
+    if (savedFocalLength != null && savedFocalLength > 0) {
+      _detector.setFocalLength(savedFocalLength);
+    }
+  }
+
+  Future<void> _saveCalibration(double focalLengthPx) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_focalLengthPreferenceKey, focalLengthPx);
+  }
+
+  Future<void> _resetCalibration() async {
+    _detector.setFocalLength(estimateFocalLengthPixels());
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_focalLengthPreferenceKey);
   }
 
   int _findDefaultCameraIndex() {
@@ -203,7 +234,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final inputImage = _convert(image);
       final frameSize = Size(image.height.toDouble(), image.width.toDouble());
-      final results = await _detector.process(inputImage, frameSize);
+
+      if (_useDepth && _depthFrameCounter % 3 == 0) {
+        try {
+          // Wait for a fresh depth map so the detector can compute distances
+          // using depth + bounding box on the same frame. This increases
+          // latency but ensures depth-based distances are available.
+          final depthMap = await _depthEstimator.estimateDepth(image);
+          if (mounted && depthMap.isNotEmpty) {
+            _cachedDepthMap = depthMap;
+          }
+        } catch (error) {
+          debugPrint('[Depth Error] $error');
+          _useDepth = false;
+        }
+      }
+
+      final results = await _detector.process(
+        inputImage,
+        frameSize,
+        depthMap: _cachedDepthMap,
+        depthEstimator: _depthEstimator,
+        useDepth: _useDepth,
+        midasScale: _midasScale,
+      );
+
+      _depthFrameCounter++;
 
       if (!mounted) {
         return;
@@ -315,14 +371,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _enterCalibrationMode() {
     setState(() {
       _isCalibrationMode = true;
-      _calibrationTarget = null;
     });
   }
 
   void _cancelCalibrationMode() {
     setState(() {
       _isCalibrationMode = false;
-      _calibrationTarget = null;
     });
   }
 
@@ -337,33 +391,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     setState(() {
-      _calibrationTarget = target;
+      _isCalibrationMode = true;
     });
 
     await _showCalibrationDialog(target);
   }
 
   Future<void> _showCalibrationDialog(RearObstacleDetection target) async {
-    final widthController = TextEditingController();
+    final heightController = TextEditingController();
     final distanceController = TextEditingController();
     String? errorText;
 
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
     void saveCalibration(BuildContext dialogContext, void Function(void Function()) setDialogState) {
-      final widthCm = double.tryParse(widthController.text.trim());
+      final heightCm = double.tryParse(heightController.text.trim());
       final distanceMeters = double.tryParse(distanceController.text.trim());
 
-      if (widthCm == null || widthCm <= 0 || distanceMeters == null || distanceMeters <= 0) {
+      if (heightCm == null || heightCm <= 0 || distanceMeters == null || distanceMeters <= 0) {
         setDialogState(() {
-          errorText = 'Enter valid width in cm and distance in meters.';
+          errorText = 'Enter valid height in cm and distance in meters.';
         });
         return;
       }
-      final objectWidthMeters = widthCm / 100.0;
-      final focalLengthPx = (target.boundingBox.width * distanceMeters) / objectWidthMeters;
+      final objectHeightMeters = heightCm / 100.0;
+      final focalLengthPx = (target.boundingBox.height * distanceMeters) / objectHeightMeters;
 
       _detector.setFocalLength(focalLengthPx);
+      unawaited(_saveCalibration(focalLengthPx));
 
       Navigator.of(dialogContext).pop();
  
@@ -394,16 +449,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Captured box width: ${target.boundingBox.width.toStringAsFixed(1)} px',
+                      'Current focal length: ${_detector.focalLengthPx.toStringAsFixed(1)} px',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Captured box height: ${target.boundingBox.height.toStringAsFixed(1)} px',
                     ),
                     const SizedBox(height: 16),
                     TextField(
-                      controller: widthController,
+                      controller: heightController,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
-                        labelText: 'Object width (cm)',
-                        hintText: 'e.g. 20',
+                        labelText: 'Object height (cm)',
+                        hintText: 'e.g. 170',
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -427,6 +487,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               actions: [
                 TextButton(
+                  onPressed: () async {
+                    await _resetCalibration();
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                    scaffoldMessenger.showSnackBar(
+                      const SnackBar(content: Text('Calibration reset to default focal length.')),
+                    );
+                    if (mounted) {
+                      _cancelCalibrationMode();
+                    }
+                  },
+                  child: const Text('Reset'),
+                ),
+                TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
                   child: const Text('Cancel'),
                 ),
@@ -443,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     // Dispose AFTER the dialog future completes, not before
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      widthController.dispose();
+      heightController.dispose();
       distanceController.dispose();
     });
   }
@@ -452,6 +527,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _disposeCameraController();
+    _depthEstimator.dispose();
     _detector.dispose();
     super.dispose();
   }
@@ -524,6 +600,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              'f=${_detector.focalLengthPx.toStringAsFixed(0)}px',
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
@@ -587,7 +670,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final nearest = _nearestDetection;
     final distanceText = nearest == null
         ? '--'
-        : '${nearest.estimatedDistanceMeters.toStringAsFixed(1)} m';
+      : nearest.estimatedDistanceMeters > 0
+      ? '${nearest.estimatedDistanceMeters.toStringAsFixed(1)} m'
+      : '--';
 
     return Container(
       width: double.infinity,

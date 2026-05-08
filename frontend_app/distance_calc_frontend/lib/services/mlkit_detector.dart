@@ -3,6 +3,10 @@ import 'dart:ui';
 
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
 
+import '../depth/depth_estimator.dart';
+import '../depth/distance_fusion.dart';
+import '../depth/known_sizes.dart';
+
 class RearObstacleDetection {
   final Rect boundingBox;
   final String label;
@@ -19,12 +23,20 @@ class RearObstacleDetection {
     required this.hazardScore,
     required this.isHazard,
   });
+
+  double get sortDistanceMeters {
+    return estimatedDistanceMeters > 0 ? estimatedDistanceMeters : double.infinity;
+  }
 }
 
 class MLKitDetector {
   ObjectDetector? _detector;
   bool _isReady = false;
-  double _focalLengthPx = 550.0;
+  double _focalLengthPx = estimateFocalLengthPixels();
+  final SizeBasedDistance _sizeBasedDistance = const SizeBasedDistance();
+  final DistanceFusion _distanceFusion = const DistanceFusion();
+
+  double get focalLengthPx => _focalLengthPx;
 
   Future<void> init() async {
     if (_isReady) {
@@ -44,7 +56,12 @@ class MLKitDetector {
   Future<List<RearObstacleDetection>> process(
     InputImage inputImage,
     Size frameSize,
-  ) async {
+    {
+    List<List<double>>? depthMap,
+    DepthEstimator? depthEstimator,
+    bool useDepth = false,
+    double midasScale = 1.0,
+  }) async {
     if (!_isReady || _detector == null) {
       return const [];
     }
@@ -52,13 +69,20 @@ class MLKitDetector {
     final results = await _detector!.processImage(inputImage);
     final detections =
         results
-            .map((object) => _convertObject(object, frameSize))
+            .map(
+              (object) => _convertObject(
+                object,
+                frameSize,
+                depthMap: depthMap,
+                depthEstimator: depthEstimator,
+                useDepth: useDepth,
+                midasScale: midasScale,
+              ),
+            )
             .where((detection) => detection.confidence >= 0.35)
             .toList()
           ..sort(
-            (left, right) => left.estimatedDistanceMeters.compareTo(
-              right.estimatedDistanceMeters,
-            ),
+            (left, right) => left.sortDistanceMeters.compareTo(right.sortDistanceMeters),
           );
 
     return detections;
@@ -70,7 +94,14 @@ class MLKitDetector {
     }
   }
 
-  RearObstacleDetection _convertObject(DetectedObject object, Size frameSize) {
+  RearObstacleDetection _convertObject(
+    DetectedObject object,
+    Size frameSize, {
+    List<List<double>>? depthMap,
+    DepthEstimator? depthEstimator,
+    bool useDepth = false,
+    double midasScale = 1.0,
+  }) {
     final label = object.labels.isNotEmpty
         ? object.labels.first.text
         : 'object';
@@ -80,15 +111,34 @@ class MLKitDetector {
         ? 0.5
         : 0.0;
 
-    final distance = _estimateDistanceMeters(
+    final sizeBasedDistance = _estimateSizeBasedDistance(
       box: object.boundingBox,
-      frameSize: frameSize,
       label: label,
     );
+
+    double? midasDepth;
+    if (useDepth && depthMap != null && depthMap.isNotEmpty && depthEstimator != null) {
+      final center = object.boundingBox.center;
+      midasDepth = depthEstimator.getDepthAtPoint(
+        center.dx.round(),
+        center.dy.round(),
+        depthMap,
+      );
+    }
+
+    final distance = _distanceFusion.fuse(
+      midasDepth: midasDepth,
+      sizeBasedDistance: sizeBasedDistance,
+      midasScale: midasScale,
+    );
+    final hazardDistance = distance > 0
+        ? distance
+        : sizeBasedDistance ?? (midasDepth != null && midasDepth > 0 ? midasScale / midasDepth : 30.0);
+
     final hazardScore = _hazardScore(
       box: object.boundingBox,
       frameSize: frameSize,
-      distanceMeters: distance,
+      distanceMeters: hazardDistance,
       confidence: confidence,
     );
 
@@ -98,21 +148,26 @@ class MLKitDetector {
       confidence: confidence,
       estimatedDistanceMeters: distance,
       hazardScore: hazardScore,
-      isHazard: hazardScore >= 0.55 || distance <= 4.0,
+      isHazard: hazardScore >= 0.55 || hazardDistance <= 4.0,
     );
   }
 
-  double _estimateDistanceMeters({
+  double? _estimateSizeBasedDistance({
     required Rect box,
-    required Size frameSize,
     required String label,
   }) {
-    final boxWidth = math.max(box.width, 1.0);  // was box.height
-    final referenceWidth = _referenceWidthMeters(label);  // renamed
+    final boxHeight = math.max(box.height, 1.0);
+    final distance = _sizeBasedDistance.calculate(
+      label: label,
+      bboxHeightPixels: boxHeight,
+      focalLengthPixels: _focalLengthPx,
+    );
 
-    final rawDistance = (_focalLengthPx * referenceWidth) / boxWidth;
+    if (distance == null || !distance.isFinite || distance <= 0) {
+      return null;
+    }
 
-    return rawDistance.clamp(1.0, 30.0);
+    return distance.clamp(0.25, 30.0);
   }
 
   double _hazardScore({
@@ -134,36 +189,6 @@ class MLKitDetector {
         (lowInFrame * 0.15) +
         (sizeFactor * 0.1) +
         (confidence * 0.05);
-  }
-
-  double _referenceWidthMeters(String label) {
-    // If calibrated, always use calibrated width regardless of label
-    if (_calibratedRealWidthMeters != null) {
-      return _calibratedRealWidthMeters!;
-    }
-
-    final normalized = label.toLowerCase();
-
-    if (normalized.contains('person') ||
-        normalized.contains('pedestrian') ||
-        normalized.contains('human')) {
-      return 0.5;  // shoulder width ~50cm
-    }
-
-    if (normalized.contains('car') ||
-        normalized.contains('truck') ||
-        normalized.contains('bus') ||
-        normalized.contains('vehicle')) {
-      return 1.8;  // typical car width ~180cm
-    }
-
-    if (normalized.contains('bicycle') ||
-        normalized.contains('bike') ||
-        normalized.contains('motorcycle')) {
-      return 0.6;  // handlebar width ~60cm
-    }
-
-    return 0.8;  // default fallback
   }
 
   void dispose() {

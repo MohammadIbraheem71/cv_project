@@ -15,9 +15,6 @@ class BoundingBoxPainter extends CustomPainter {
       return;
     }
 
-    final scaleX = size.width / frameSize.width;
-    final scaleY = size.height / frameSize.height;
-
     final warningZone = RRect.fromRectAndRadius(
       Rect.fromLTWH(
         size.width * 0.18,
@@ -67,8 +64,11 @@ class BoundingBoxPainter extends CustomPainter {
       final boxPaint = detection.isHazard ? hazardPaint : safePaint;
       canvas.drawRect(rect, boxPaint);
 
+      final distanceLabel = detection.estimatedDistanceMeters > 0
+          ? '${detection.estimatedDistanceMeters.toStringAsFixed(1)} m'
+          : '--';
       final label =
-          '${detection.label} ${(detection.confidence * 100).toStringAsFixed(0)}%  •  ${detection.estimatedDistanceMeters.toStringAsFixed(1)} m';
+          '${detection.label} ${(detection.confidence * 100).toStringAsFixed(0)}%  •  $distanceLabel';
 
       final textSpan = TextSpan(text: label, style: textStyle);
       final textPainter = TextPainter(
