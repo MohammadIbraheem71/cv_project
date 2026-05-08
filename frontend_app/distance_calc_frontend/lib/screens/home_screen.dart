@@ -361,10 +361,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
       final objectWidthMeters = widthCm / 100.0;
-      // Focal length from pinhole camera: f = (bbox_width * distance) / object_real_width
       final focalLengthPx = (target.boundingBox.width * distanceMeters) / objectWidthMeters;
 
-      _detector.setFocalLength(focalLengthPx, realWidthMeters: objectWidthMeters);
+      _detector.setFocalLength(focalLengthPx);
 
       Navigator.of(dialogContext).pop();
  
