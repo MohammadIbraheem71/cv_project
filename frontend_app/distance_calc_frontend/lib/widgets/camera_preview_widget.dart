@@ -42,6 +42,7 @@ class CameraPreviewWidget extends StatelessWidget {
                   CameraPreview(controller),
                   IgnorePointer(
                     child: CustomPaint(
+                      // bounding boxes r drwn here
                       painter: BoundingBoxPainter(
                         detections,
                         frameSize,

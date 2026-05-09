@@ -3,6 +3,9 @@ import 'dart:ui';
 
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
 
+
+// this file contains all logic regarding the mlkit object detection and distance estimation
+
 class RearObstacleDetection {
   final Rect boundingBox;
   final String label;
@@ -102,6 +105,8 @@ class MLKitDetector {
     );
   }
 
+  // this function estimates the distance of the object in real world meters
+  // it uses the focal length of the camera and the estimated width of the object
   double _estimateDistanceMeters({
     required Rect box,
     required Size frameSize,
@@ -135,6 +140,10 @@ class MLKitDetector {
         (sizeFactor * 0.1) +
         (confidence * 0.05);
   }
+
+  // this function returns the estimated real world width of the object based on its label
+  // since we cant know the widths of EVERY object , we have to make some assumptions
+  // for our use case of a rear obstacle detector for cars, we will focus on common obstacles like pedestrians, cars
 
   double _referenceWidthMeters(String label) {
     final normalized = label.toLowerCase();

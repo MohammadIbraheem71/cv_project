@@ -8,8 +8,10 @@ import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart
 
 import '../main.dart';
 import '../services/mlkit_detector.dart';
-import '../widgets/bounding_box_painter.dart';
+import '../widgets/bounding_box_painter.dart'; // this import is not used in this file, it is used in camera_preview_widget, im too lazu to remove it form here
 import '../widgets/camera_preview_widget.dart';
+
+// this is the main screen of the app, contains all logic for the camera preview, object detection and user interactions like calibration and camera switching
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -130,6 +132,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     try {
       await controller.initialize();
+
+      // register streaming callback before starting the stream to avoid missing frames
       await controller.startImageStream(_processFrame);
 
       if (!mounted) {
@@ -196,6 +200,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _initializeCamera();
   }
 
+  // this function is called everytime the camera preview is updated with a new frame, it runs the object detection on the frame and updates the state with the new detections and also handles the hazard alert logic
   Future<void> _processFrame(CameraImage image) async {
     if (_isProcessing || !_isCameraReady) {
       return;
@@ -346,6 +351,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _showCalibrationDialog(target);
   }
 
+  // calibration logic here
   Future<void> _showCalibrationDialog(RearObstacleDetection target) async {
     final widthController = TextEditingController();
     final distanceController = TextEditingController();
@@ -353,6 +359,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
+    // this function is called when the user presses the "Save" button in the calibration dialog, it validates the input and if valid, calculates the focal length and saves it to the detector, then exits calibration mode
     void saveCalibration(BuildContext dialogContext, void Function(void Function()) setDialogState) {
       final widthCm = double.tryParse(widthController.text.trim());
       final distanceMeters = double.tryParse(distanceController.text.trim());
