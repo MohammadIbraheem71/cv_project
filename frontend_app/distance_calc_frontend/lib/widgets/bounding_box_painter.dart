@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import '../services/mlkit_detector.dart';
 
+/// CustomPainter responsible for drawing detection boxes, labels, and the warning zone
+/// over the camera preview.
 class BoundingBoxPainter extends CustomPainter {
   final List<RearObstacleDetection> detections;
-  final Size frameSize;
-  final bool mirror;
+  final Size frameSize; // Size of the raw camera frame
+  final bool mirror;    // Whether to flip the boxes (for front camera)
 
   BoundingBoxPainter(this.detections, this.frameSize, {this.mirror = false});
 
@@ -15,9 +17,7 @@ class BoundingBoxPainter extends CustomPainter {
       return;
     }
 
-    final scaleX = size.width / frameSize.width;
-    final scaleY = size.height / frameSize.height;
-
+    // Define the "Warning Zone" - a central area where obstacles are most dangerous
     final warningZone = RRect.fromRectAndRadius(
       Rect.fromLTWH(
         size.width * 0.18,
@@ -28,23 +28,28 @@ class BoundingBoxPainter extends CustomPainter {
       const Radius.circular(24),
     );
 
+    // Style for the background of the warning zone
     final zonePaint = Paint()
       ..color = const Color(0xFFFF3B30).withOpacity(0.08)
       ..style = PaintingStyle.fill;
 
+    // Style for the border of the warning zone
     final zoneBorderPaint = Paint()
       ..color = const Color(0xFFFF3B30).withOpacity(0.25)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
+    // Draw the warning zone on the canvas
     canvas.drawRRect(warningZone, zonePaint);
     canvas.drawRRect(warningZone, zoneBorderPaint);
 
+    // Paint for safe objects (Green)
     final safePaint = Paint()
       ..color = const Color(0xFF00E676)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
 
+    // Paint for hazardous objects (Red)
     final hazardPaint = Paint()
       ..color = const Color(0xFFFF453A)
       ..style = PaintingStyle.stroke
@@ -58,15 +63,19 @@ class BoundingBoxPainter extends CustomPainter {
       fontWeight: FontWeight.bold,
     );
 
+    // Iterate through all detected objects and draw them
     for (final detection in detections) {
+      // Map the ML box coordinates to the actual screen coordinates
       final rect = _mapRect(
         detection.boundingBox,
         canvasSize: size,
       );
 
+      // Choose color based on whether it's a hazard
       final boxPaint = detection.isHazard ? hazardPaint : safePaint;
       canvas.drawRect(rect, boxPaint);
 
+      // Create the label text: "Object Name Confidence% • Distance m"
       final label =
           '${detection.label} ${(detection.confidence * 100).toStringAsFixed(0)}%  •  ${detection.estimatedDistanceMeters.toStringAsFixed(1)} m';
 
@@ -76,11 +85,13 @@ class BoundingBoxPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout();
 
+      // Calculate where to place the label (above the box)
       final offset = Offset(
         rect.left,
         (rect.top - textPainter.height - 8).clamp(4.0, size.height - 24),
       );
 
+      // Draw the background for the text label
       final backgroundRect = Rect.fromLTWH(
         offset.dx,
         offset.dy,
@@ -94,9 +105,11 @@ class BoundingBoxPainter extends CustomPainter {
 
       canvas.drawRect(backgroundRect, paintTextBg);
 
+      // Finally, paint the text
       textPainter.paint(canvas, Offset(offset.dx + 3, offset.dy + 2));
     }
 
+    // Draw a subtle vertical guide line in the center of the screen
     final guidePaint = Paint()
       ..color = const Color(0xFFFFFFFF).withOpacity(0.12)
       ..style = PaintingStyle.stroke
@@ -109,6 +122,8 @@ class BoundingBoxPainter extends CustomPainter {
     );
   }
 
+  /// Scales and offsets the raw detection rectangle to fit the actual screen size.
+  /// Also handles horizontal flipping for the front-facing camera.
   Rect _mapRect(
     Rect rect, {
     required Size canvasSize,
@@ -129,6 +144,7 @@ class BoundingBoxPainter extends CustomPainter {
       return Rect.fromLTRB(left, top, right, bottom);
     }
 
+    // For front camera, we mirror the horizontal coordinates
     return Rect.fromLTRB(
       canvasSize.width - right,
       top,
@@ -139,6 +155,7 @@ class BoundingBoxPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant BoundingBoxPainter oldDelegate) {
+    // Only repaint if the detections or frame data has changed
     return oldDelegate.detections != detections ||
         oldDelegate.frameSize != frameSize ||
         oldDelegate.mirror != mirror;

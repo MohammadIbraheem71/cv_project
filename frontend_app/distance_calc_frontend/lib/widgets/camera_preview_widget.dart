@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import '../services/mlkit_detector.dart';
 import 'bounding_box_painter.dart';
 
+/// A widget that displays the camera feed with a detection overlay and UI instructions.
 class CameraPreviewWidget extends StatelessWidget {
   final CameraController controller;
   final List<RearObstacleDetection> detections;
@@ -35,14 +36,17 @@ class CameraPreviewWidget extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(28),
             child: AspectRatio(
+              // Standard vertical aspect ratio for the preview
               aspectRatio: 3 / 4,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
+                  // Layer 1: The live camera feed
                   CameraPreview(controller),
+                  
+                  // Layer 2: The detection boxes (Custom Paint)
                   IgnorePointer(
                     child: CustomPaint(
-                      // bounding boxes r drwn here
                       painter: BoundingBoxPainter(
                         detections,
                         frameSize,
@@ -50,6 +54,8 @@ class CameraPreviewWidget extends StatelessWidget {
                       ),
                     ),
                   ),
+                  
+                  // Layer 3: Instruction panel at the bottom
                   Positioned(
                     left: 18,
                     right: 18,
@@ -68,6 +74,7 @@ class CameraPreviewWidget extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // Dynamic instruction text based on the current mode
                             Text(
                               isCalibrationMode
                                   ? 'Calibration mode is active. Place the object in view, then capture it.'
@@ -78,6 +85,8 @@ class CameraPreviewWidget extends StatelessWidget {
                                 height: 1.3,
                               ),
                             ),
+                            
+                            // Calibration buttons (only shown in Calibration Mode)
                             if (isCalibrationMode) ...[
                               const SizedBox(height: 12),
                               Row(
@@ -112,4 +121,4 @@ class CameraPreviewWidget extends StatelessWidget {
       ),
     );
   }
-}
+}

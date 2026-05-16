@@ -8,11 +8,10 @@ import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart
 
 import '../main.dart';
 import '../services/mlkit_detector.dart';
-import '../widgets/bounding_box_painter.dart'; // this import is not used in this file, it is used in camera_preview_widget, im too lazu to remove it form here
 import '../widgets/camera_preview_widget.dart';
 
-// this is the main screen of the app, contains all logic for the camera preview, object detection and user interactions like calibration and camera switching
-
+/// The main dashboard screen. It manages the camera stream, coordinates 
+/// with the ML detector, and handles user interactions like calibration.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -21,20 +20,22 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  // The service that handles AI object detection
   final MLKitDetector _detector = MLKitDetector();
 
   CameraController? _controller;
   List<RearObstacleDetection> _detections = const [];
 
+  // Status flags
   bool _isCameraReady = false;
-  bool _isProcessing = false;
+  bool _isProcessing = false;     // Prevents overlapping frames from being processed
   bool _isInitializing = false;
   bool _isDetectorReady = false;
 
   int _selectedCameraIndex = 0;
   Size _frameSize = Size.zero;
   String? _errorMessage;
-  DateTime? _lastAlertAt;
+  DateTime? _lastAlertAt;         // Used to throttle the sound alerts
   bool _isCalibrationMode = false;
   RearObstacleDetection? _calibrationTarget;
 
@@ -46,7 +47,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _selectedCameraIndex >= _availableCameras.length) {
       return null;
     }
-
     return _availableCameras[_selectedCameraIndex];
   }
 
@@ -56,16 +56,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    // Start observing app lifecycle (e.g. to stop camera when app is minimized)
     WidgetsBinding.instance.addObserver(this);
     _bootstrap();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_availableCameras.isEmpty) {
-      return;
-    }
+    if (_availableCameras.isEmpty) return;
 
+    // Handle backgrounding/foregrounding to save battery and camera resources
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       _disposeCameraController();
@@ -74,25 +74,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Initial setup: Initialize the AI detector and the camera.
   Future<void> _bootstrap() async {
     try {
       await _detector.init();
       _isDetectorReady = true;
     } catch (error) {
       if (mounted) {
-        setState(() {
-          _errorMessage = 'ML detector failed to initialize: $error';
-        });
+        setState(() => _errorMessage = 'ML detector failed: $error');
       }
       return;
     }
 
     if (_availableCameras.isEmpty) {
       if (mounted) {
-        setState(() {
-          _errorMessage =
-              'No cameras were found on this device. Connect a camera and retry.';
-        });
+        setState(() => _errorMessage = 'No cameras found on this device.');
       }
       return;
     }
@@ -101,23 +97,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _initializeCamera();
   }
 
+  /// Prefers the back camera if available.
   int _findDefaultCameraIndex() {
     final backIndex = _availableCameras.indexWhere(
       (camera) => camera.lensDirection == CameraLensDirection.back,
     );
-
     return backIndex >= 0 ? backIndex : 0;
   }
 
+  /// Configures and starts the camera stream.
   Future<void> _initializeCamera() async {
     if (_isInitializing || !_isDetectorReady || _availableCameras.isEmpty) {
       return;
     }
 
     final activeCamera = _activeCamera;
-    if (activeCamera == null) {
-      return;
-    }
+    if (activeCamera == null) return;
 
     _isInitializing = true;
     _errorMessage = null;
@@ -125,15 +120,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final controller = CameraController(
       activeCamera,
-      ResolutionPreset.medium,
+      ResolutionPreset.medium, // Balance between performance and accuracy
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
+      imageFormatGroup: ImageFormatGroup.yuv420, // Required for Android processing
     );
 
     try {
       await controller.initialize();
-
-      // register streaming callback before starting the stream to avoid missing frames
+      // Start streaming frames to the _processFrame method
       await controller.startImageStream(_processFrame);
 
       if (!mounted) {
@@ -162,66 +156,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Safely stops and cleans up the camera.
   Future<void> _disposeCameraController() async {
     final controller = _controller;
     _controller = null;
 
-    if (controller == null) {
-      return;
-    }
+    if (controller == null) return;
 
     try {
       if (controller.value.isStreamingImages) {
         await controller.stopImageStream();
       }
-    } catch (_) {
-      // The stream may already be stopped during lifecycle changes.
-    }
+    } catch (_) {}
 
     await controller.dispose();
 
     if (mounted) {
-      setState(() {
-        _isCameraReady = false;
-      });
+      setState(() => _isCameraReady = false);
     }
   }
 
+  /// Toggles between front and back cameras.
   Future<void> _switchCamera() async {
-    if (_availableCameras.length < 2 || _isInitializing) {
-      return;
-    }
+    if (_availableCameras.length < 2 || _isInitializing) return;
 
     setState(() {
-      _selectedCameraIndex =
-          (_selectedCameraIndex + 1) % _availableCameras.length;
+      _selectedCameraIndex = (_selectedCameraIndex + 1) % _availableCameras.length;
     });
 
     await _initializeCamera();
   }
 
-  // this function is called everytime the camera preview is updated with a new frame, it runs the object detection on the frame and updates the state with the new detections and also handles the hazard alert logic
+  /// The core "loop" function called for every camera frame.
   Future<void> _processFrame(CameraImage image) async {
-    if (_isProcessing || !_isCameraReady) {
-      return;
-    }
+    // If already processing a frame, skip this one to avoid lag
+    if (_isProcessing || !_isCameraReady) return;
 
     _isProcessing = true;
 
     try {
       final inputImage = _convert(image);
       final frameSize = Size(image.height.toDouble(), image.width.toDouble());
+      
+      // Pass the frame to the AI service
       final results = await _detector.process(inputImage, frameSize);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
         _detections = results;
         _frameSize = frameSize;
       });
 
+      // Check if the closest object is a hazard
       _handleHazardAlert(results.isNotEmpty ? results.first : null);
     } catch (error) {
       debugPrint('[Detection Error] $error');
@@ -230,25 +217,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Triggers sound and vibration if a hazard is detected, with throttling.
   void _handleHazardAlert(RearObstacleDetection? nearestDetection) {
-    if (nearestDetection == null || !nearestDetection.isHazard) {
-      return;
-    }
+    if (nearestDetection == null || !nearestDetection.isHazard) return;
 
     final now = DateTime.now();
-    final canAlert =
-        _lastAlertAt == null ||
+    // Only alert every 2 seconds to avoid annoying the user
+    final canAlert = _lastAlertAt == null ||
         now.difference(_lastAlertAt!) >= const Duration(seconds: 2);
 
-    if (!canAlert) {
-      return;
-    }
+    if (!canAlert) return;
 
     _lastAlertAt = now;
     SystemSound.play(SystemSoundType.alert);
     HapticFeedback.mediumImpact();
   }
 
+  /// Converts camera stream format (YUV) to a format ML Kit understands (NV21/Bytes).
   InputImage _convert(CameraImage image) {
     final bytes = _convertYuv420ToNv21(image);
     final imageSize = Size(image.width.toDouble(), image.height.toDouble());
@@ -270,6 +255,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Helper to convert raw YUV plane data to NV21 bytes for processing.
   Uint8List _convertYuv420ToNv21(CameraImage image) {
     final width = image.width;
     final height = image.height;
@@ -282,12 +268,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     for (var row = 0; row < height; row++) {
       final rowStart = row * yPlane.bytesPerRow;
-      output.setRange(
-        outputOffset,
-        outputOffset + width,
-        yPlane.bytes,
-        rowStart,
-      );
+      output.setRange(outputOffset, outputOffset + width, yPlane.bytes, rowStart);
       outputOffset += width;
     }
 
@@ -299,26 +280,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     for (var row = 0; row < chromaHeight; row++) {
       final uRowStart = row * uPlane.bytesPerRow;
       final vRowStart = row * vPlane.bytesPerRow;
-
       for (var col = 0; col < chromaWidth; col++) {
         final uIndex = uRowStart + col * uPixelStride;
         final vIndex = vRowStart + col * vPixelStride;
-
         output[outputOffset++] = vPlane.bytes[vIndex];
         output[outputOffset++] = uPlane.bytes[uIndex];
       }
     }
-
     return output;
   }
 
-  RearObstacleDetection? get _nearestDetection {
-    if (_detections.isEmpty) {
-      return null;
-    }
-
-    return _detections.first;
-  }
+  RearObstacleDetection? get _nearestDetection =>
+      _detections.isEmpty ? null : _detections.first;
 
   void _enterCalibrationMode() {
     setState(() {
@@ -334,124 +307,83 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Captures the currently detected object to start the calibration process.
   Future<void> _captureCalibrationTarget() async {
     final target = _nearestDetection;
-
     if (target == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No detected object is available to calibrate.')),
+        const SnackBar(content: Text('No object detected to calibrate.')),
       );
       return;
     }
 
-    setState(() {
-      _calibrationTarget = target;
-    });
-
+    setState(() => _calibrationTarget = target);
     await _showCalibrationDialog(target);
   }
 
-  // calibration logic here
+  /// Logic to update the camera's Focal Length based on user input.
   Future<void> _showCalibrationDialog(RearObstacleDetection target) async {
     final widthController = TextEditingController();
     final distanceController = TextEditingController();
     String? errorText;
+    final messenger = ScaffoldMessenger.of(context);
 
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-
-    // this function is called when the user presses the "Save" button in the calibration dialog, it validates the input and if valid, calculates the focal length and saves it to the detector, then exits calibration mode
     void saveCalibration(BuildContext dialogContext, void Function(void Function()) setDialogState) {
       final widthCm = double.tryParse(widthController.text.trim());
       final distanceMeters = double.tryParse(distanceController.text.trim());
 
       if (widthCm == null || widthCm <= 0 || distanceMeters == null || distanceMeters <= 0) {
-        setDialogState(() {
-          errorText = 'Enter valid width in cm and distance in meters.';
-        });
+        setDialogState(() => errorText = 'Enter valid dimensions.');
         return;
       }
+      
+      // Calculate Focal Length: (Pixel Width * Distance) / Real Width
       final objectWidthMeters = widthCm / 100.0;
       final focalLengthPx = (target.boundingBox.width * distanceMeters) / objectWidthMeters;
 
       _detector.setFocalLength(focalLengthPx);
-
       Navigator.of(dialogContext).pop();
  
-      scaffoldMessenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            'Calibration saved. Focal length set to ${focalLengthPx.toStringAsFixed(1)} px.',
-          ),
-        ),
+      messenger.showSnackBar(
+        SnackBar(content: Text('Calibration saved: ${focalLengthPx.toStringAsFixed(1)} px')),
       );
 
-      if (mounted) {
-        _cancelCalibrationMode();
-      }
+      if (mounted) _cancelCalibrationMode();
     }
 
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return StatefulBuilder(
-          builder: (BuildContext context, void Function(void Function()) setDialogState) {
-            return AlertDialog(
-              title: const Text('Calibrate object'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Captured box width: ${target.boundingBox.width.toStringAsFixed(1)} px',
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: widthController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'Object width (cm)',
-                        hintText: 'e.g. 20',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: distanceController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(
-                        labelText: 'Distance from camera (m)',
-                        hintText: 'e.g. 2.5',
-                      ),
-                    ),
-                    if (errorText != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        errorText!,
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
-                    ],
-                  ],
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Calibrate Camera'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: widthController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Object width (cm)'),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
+                TextField(
+                  controller: distanceController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Distance from camera (m)'),
                 ),
-                FilledButton(
-                  onPressed: () => saveCalibration(dialogContext, setDialogState),
-                  child: const Text('Save'),
-                ),
+                if (errorText != null) 
+                  Text(errorText!, style: const TextStyle(color: Colors.red)),
               ],
-            );
-          },
-        );
-      },
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancel')),
+            FilledButton(onPressed: () => saveCalibration(dialogContext, setDialogState), child: const Text('Save')),
+          ],
+        ),
+      ),
     );
 
-    // Dispose AFTER the dialog future completes, not before
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widthController.dispose();
       distanceController.dispose();
@@ -466,68 +398,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  Widget _buildLoadingState() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(
-              _errorMessage ?? 'Starting rear obstacle detector...',
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildErrorState(String message) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.videocam_off, size: 64, color: Colors.white70),
-                const SizedBox(height: 16),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16, height: 1.4),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      _errorMessage = null;
-                      _isCameraReady = false;
-                      _detections = const [];
-                    });
-                    _bootstrap();
-                  },
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
+  /// Top navigation bar with status indicator and menu.
   Widget _buildTopBar() {
     final nearest = _nearestDetection;
-    final dangerColor = nearest?.isHazard == true
-        ? Colors.redAccent
-        : Colors.greenAccent;
+    final dangerColor = nearest?.isHazard == true ? Colors.redAccent : Colors.greenAccent;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -542,50 +416,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               border: Border.all(color: dangerColor.withOpacity(0.35)),
             ),
             child: Text(
-              nearest == null
-                  ? 'IDLE'
-                  : nearest.isHazard
-                  ? 'DANGER'
-                  : 'SAFE',
-              style: TextStyle(
-                color: dangerColor,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
+              nearest == null ? 'IDLE' : (nearest.isHazard ? 'DANGER' : 'SAFE'),
+              style: TextStyle(color: dangerColor, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(width: 8),
           PopupMenuButton(
             icon: const Icon(Icons.more_vert),
-            onSelected: (String value) {
-              if (value == 'camera_flip' && _availableCameras.length > 1) {
-                _switchCamera();
-              } else if (value == 'calibration') {
-                _enterCalibrationMode();
-              }
+            onSelected: (val) {
+              if (val == 'flip') _switchCamera();
+              if (val == 'calib') _enterCalibrationMode();
             },
-            itemBuilder: (BuildContext context) => [
-              if (_availableCameras.length > 1)
-                const PopupMenuItem<String>(
-                  value: 'camera_flip',
-                  child: Row(
-                    children: [
-                      Icon(Icons.cameraswitch, size: 20),
-                      SizedBox(width: 12),
-                      Text('Flip Camera'),
-                    ],
-                  ),
-                ),
-              const PopupMenuItem<String>(
-                value: 'calibration',
-                child: Row(
-                  children: [
-                    Icon(Icons.tune, size: 20),
-                    SizedBox(width: 12),
-                    Text('Calibration'),
-                  ],
-                ),
-              ),
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(value: 'flip', child: Text('Flip Camera')),
+              const PopupMenuItem(value: 'calib', child: Text('Calibration')),
             ],
           ),
         ],
@@ -593,14 +437,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Bottom panel showing the most important metrics.
   Widget _buildBottomPanel() {
     final nearest = _nearestDetection;
-    final distanceText = nearest == null
-        ? '--'
-        : '${nearest.estimatedDistanceMeters.toStringAsFixed(1)} m';
-
     return Container(
-      width: double.infinity,
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -608,27 +448,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white10),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _MetricTile(
-                  label: 'Nearest distance',
-                  value: distanceText,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricTile(
-                  label: 'Objects tracked',
-                  value: '${_detections.length}',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
+          Expanded(child: _MetricTile(label: 'Distance', value: nearest == null ? '--' : '${nearest.estimatedDistanceMeters.toStringAsFixed(1)} m')),
+          const SizedBox(width: 12),
+          Expanded(child: _MetricTile(label: 'Tracked', value: '${_detections.length}')),
         ],
       ),
     );
@@ -637,11 +461,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (_errorMessage != null) {
-      return _buildErrorState(_errorMessage!);
+      return Scaffold(backgroundColor: Colors.black, body: Center(child: Text(_errorMessage!)));
     }
 
     if (!_isCameraReady || _controller == null) {
-      return _buildLoadingState();
+      return const Scaffold(backgroundColor: Colors.black, body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
@@ -667,10 +491,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 }
 
+/// Simple reusable UI component for showing a metric (Distance/Count).
 class _MetricTile extends StatelessWidget {
   final String label;
   final String value;
-
   const _MetricTile({required this.label, required this.value});
 
   @override
@@ -685,19 +509,9 @@ class _MetricTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white60, fontSize: 12),
-          ),
+          Text(label, style: const TextStyle(color: Colors.white60, fontSize: 12)),
           const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          Text(value, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
         ],
       ),
     );
